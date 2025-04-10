@@ -8,15 +8,25 @@ on:
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: fuelpoint-developer-app-2
-  IMAGE_TAG: latest
+
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    environment: develop
 
     steps:
       - name: Checkout código
         uses: actions/checkout@v3
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup JDK
         uses: actions/setup-java@v3
@@ -30,18 +40,21 @@ jobs:
       - name: Login no AWS ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Criar tag da imagem
+      - name: Criar tags da imagem
         id: ecr
         run: |
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           ECR_URL=$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY
+          COMMIT_SHA=${GITHUB_SHA::7}
           echo "REPO_URL=$ECR_URL" >> $GITHUB_ENV
-          echo "::set-output name=image::$ECR_URL:$IMAGE_TAG"
+          echo "IMAGE_TAG=$COMMIT_SHA" >> $GITHUB_ENV
+          echo "ECR_URL=$ECR_URL" >> $GITHUB_OUTPUT
 
       - name: Build Docker image
         run: |
-          docker build -t $REPO_URL:$IMAGE_TAG .
+          docker build -t $REPO_URL:latest -t $REPO_URL:$IMAGE_TAG .
 
-      - name: Push Docker image
+      - name: Push Docker images
         run: |
+          docker push $REPO_URL:latest
           docker push $REPO_URL:$IMAGE_TAG
