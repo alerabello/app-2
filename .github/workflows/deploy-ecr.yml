@@ -1,4 +1,4 @@
-name: Build and Push to ECR
+name: Build and Push to ECR + Deploy ECS
 
 on:
   push:
@@ -8,13 +8,15 @@ on:
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: fuelpoint-developer-app-2
+  ECS_CLUSTER: ecs-cluster-developer
+  ECS_SERVICE: SVG-Service-2-ECS
 
 permissions:
   id-token: write
   contents: read
 
 jobs:
-  build-and-push:
+  build-and-deploy:
     runs-on: ubuntu-latest
     environment: develop
 
@@ -58,3 +60,11 @@ jobs:
         run: |
           docker push $REPO_URL:latest
           docker push $REPO_URL:$IMAGE_TAG
+
+      - name: Deploy ECS com nova imagem
+        run: |
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $ECS_SERVICE \
+            --force-new-deployment \
+            --region $AWS_REGION
