@@ -1,9 +1,16 @@
 name: Build and Push to ECR + Deploy ECS
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
+    inputs:
+      aws_account:
+        description: 'AWS Account to deploy to (develop, stage, prod)'
+        required: true
+        default: 'develop'
+      branch:
+        description: 'Branch to build'
+        required: true
+        default: 'develop'
 
 env:
   AWS_REGION: us-east-1
@@ -14,20 +21,41 @@ env:
 permissions:
   id-token: write
   contents: read
+  issues: write
 
 jobs:
-  build-and-deploy:
+  build-and-push:
     runs-on: ubuntu-latest
-    environment: develop
+    environment: ${{ github.event.inputs.aws_account }}
 
     steps:
       - name: Checkout código
         uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.inputs.branch }}
+
+      - name: Set role-to-assume
+        run: |
+          case "${{ github.event.inputs.aws_account }}" in
+            prod)
+              echo "role=${{ secrets.AWS_ROLE_ARN_PROD }}" >> $GITHUB_ENV
+              ;;
+            stage)
+              echo "role=${{ secrets.AWS_ROLE_ARN_STAGE }}" >> $GITHUB_ENV
+              ;;
+            develop)
+              echo "role=${{ secrets.AWS_ROLE_ARN_DEVELOP }}" >> $GITHUB_ENV
+              ;;
+            *)
+              echo "❌ Invalid aws_account: ${{ github.event.inputs.aws_account }}"
+              exit 1
+              ;;
+          esac
 
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          role-to-assume: ${{ env.role }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup JDK
@@ -60,6 +88,33 @@ jobs:
         run: |
           docker push $REPO_URL:latest
           docker push $REPO_URL:$IMAGE_TAG
+
+  approval:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.aws_account }}
+
+    steps:
+      - name: Request Manual Approval
+        uses: trstringer/manual-approval@v1
+        with:
+          secret: ${{ secrets.GITHUB_TOKEN }}
+          approvers: alerabello
+          minimum-approvals: 1
+          additional-approved-words: 'Approve, Approved, approve, approved'
+        timeout-minutes: 10
+
+  deploy:
+    needs: approval
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.aws_account }}
+
+    steps:
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ env.role }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Deploy ECS com nova imagem
         run: |
